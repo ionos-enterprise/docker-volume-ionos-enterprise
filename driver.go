@@ -30,6 +30,13 @@ type Driver struct {
 	diskType     string
 	mountUtil    *MountUtil
 	m            *sync.Mutex
+	volumes      map[string]*VolumeState
+}
+
+type VolumeState struct {
+	volumeId   string
+	mountPoint string
+	deviceName string
 }
 
 func ProfitBricksDriver(mountutil *MountUtil, args CommandLineArgs) (*Driver, error) {
@@ -57,6 +64,9 @@ func ProfitBricksDriver(mountutil *MountUtil, args CommandLineArgs) (*Driver, er
 		serverId:     serverId,
 		size:         *args.size,
 		diskType:     *args.diskType,
+		volumes :          make(map[string]*VolumeState),
+		metadataPath : *args.metadataPath,
+		mountUtil:mountutil,
 	}, nil
 
 }
@@ -91,7 +101,7 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 	}
 
 	volumeName, err := d.mountUtil.GetDeviceName()
-	if err!=nil{
+	if err != nil {
 		log.Error(err.Error())
 		return volume.Response{Err: err.Error()}
 	}
@@ -104,12 +114,41 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	err = d.mountUtil.MountVolume(volumeName, volumePath)
+	metadataFilePath := filepath.Join(d.metadataPath, r.Name)
+
+	metadataFile, err := os.Create(metadataFilePath)
+	if err != nil {
+		log.Errorf("failed to create metadata file '%v' for volume '%v'", metadataFilePath, r.Name)
+		return volume.Response{Err: err.Error()}
+	}
+
+	err = metadataFile.Chmod(MetadataFileMode)
+	if err != nil {
+		os.Remove(metadataFilePath)
+		log.Errorf("failed to change the mode for the metadata file '%v' for volume '%v'", metadataFilePath, r.Name)
+		return volume.Response{Err: err.Error()}
+	}
+
+	d.volumes[r.Name] = &VolumeState{
+		volumeId: vol.Id,
+		mountPoint: volumePath,
+		deviceName : volumeName,
+	}
+
+	return volume.Response{}
+}
+
+func (d *Driver) Mount(r volume.MountRequest) volume.Response {
+	err := d.mountUtil.MountVolume(r.Name, d.volumes[r.Name].mountPoint)
 	if err != nil {
 		log.Error(err.Error())
 		return volume.Response{Err: err.Error()}
 	}
 
+	return volume.Response{}
+}
+
+func (d *Driver) Unmount(r volume.UnmountRequest) volume.Response {
 	return volume.Response{}
 }
 
@@ -126,14 +165,6 @@ func (d *Driver) Remove(r volume.Request) volume.Response {
 }
 
 func (d *Driver) Path(r volume.Request) volume.Response {
-	return volume.Response{}
-}
-
-func (d *Driver) Mount(r volume.MountRequest) volume.Response {
-	return volume.Response{}
-}
-
-func (d *Driver) Unmount(r volume.UnmountRequest) volume.Response {
 	return volume.Response{}
 }
 
@@ -171,13 +202,13 @@ func (d *Driver) waitTillProvisioned(path string) error {
 		time.Sleep(10 * time.Second)
 		i++
 	}
-	return fmt.Errorf("Timeout has expired")
+	return fmt.Errorf("Timeout has expired %s", "")
 }
-
-func getDeviceName(deviceNumber int64) string {
-	alphabet := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"}
-
-	name := fmt.Sprintf("vd%s", alphabet[deviceNumber - 1])
-
-	return name
-}
+//
+//func getDeviceName(deviceNumber int64) string {
+//	alphabet := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"}
+//
+//	name := fmt.Sprintf("vd%s", alphabet[deviceNumber - 1])
+//
+//	return name
+//}
