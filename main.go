@@ -1,11 +1,11 @@
 package main
 
 import (
-	"os"
-	flag "github.com/ogier/pflag"
 	"fmt"
-	"github.com/docker/go-plugins-helpers/volume"
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/go-plugins-helpers/volume"
+	flag "github.com/ogier/pflag"
+	"os"
 )
 
 type CommandLineArgs struct {
@@ -21,11 +21,10 @@ type CommandLineArgs struct {
 }
 
 const (
-	DriverName = "ProfitBricks"
 	DefaultBaseMetadataPath = "/etc/docker/plugins/profitbricks-volume"
-	DefaultBaseMountPath = "/var/lib/docker-volume-profitbricks"
-	DefaultUnixSocketGroup = "docker"
-	DriverVersion = "1.0.0"
+	DefaultBaseMountPath    = "/var/lib/docker-volume-profitbricks"
+	DefaultUnixSocketGroup  = "docker"
+	DriverVersion           = "1.0.0"
 )
 
 func main() {
@@ -37,7 +36,7 @@ func main() {
 	fmt.Println(*args.mountPath)
 	fmt.Println(*args.unixSocketGroup)
 	fmt.Println(*args.version)
-	mountUtil := NewMountUtil()
+	mountUtil := NewUtilities()
 
 	driver, err := ProfitBricksDriver(mountUtil, *args)
 	if err != nil {
@@ -65,8 +64,8 @@ func parseCommandLineArgs() *CommandLineArgs {
 
 	//ProfitBricks VDC, server and location parameters
 	args.datacenterId = flag.StringP("profitbricks-datacenter", "d", os.Getenv("PROFIT1BRICKS_DATACENTER"), "ProfitBricks Virtual Data Center ID")
-	args.size = flag.IntP("profitbricks-volume-size","s", 50, "ProfitBricks Volume size")
-	args.diskType = flag.StringP("profitbricks-disk-type","t", "HDD", "ProfitBricks Volume type")
+	args.size = flag.IntP("profitbricks-volume-size", "s", 50, "ProfitBricks Volume size")
+	args.diskType = flag.StringP("profitbricks-disk-type", "t", "HDD", "ProfitBricks Volume type")
 
 	//Mount parameters
 	args.metadataPath = flag.String("metadata-path", DefaultBaseMetadataPath, "the path under which to store volume metadata")
@@ -94,4 +93,3 @@ func parseCommandLineArgs() *CommandLineArgs {
 
 	return args
 }
-

@@ -4,29 +4,39 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os/exec"
 )
 
-const mountDevicePrefix = "/dev/disk/by-id/scsi-0DO_Volume_"
-
-type MountUtil struct {
+type Utilities struct {
 }
 
-func NewMountUtil() *MountUtil {
-	return &MountUtil{}
+func NewUtilities() *Utilities {
+	return &Utilities{}
 }
 
-func (m MountUtil) MountVolume(volumeName string, mountpoint string) error {
-	cmd := exec.Command("mount", mountDevicePrefix + volumeName, mountpoint)
+func (m Utilities) MountVolume(volumeName string, mountpoint string) error {
+	cmd := exec.Command("mount", volumeName, mountpoint)
 	return cmd.Run()
 }
 
-func (m MountUtil) UnmountVolume(volumeName string, mountpoint string) error {
-	cmd := exec.Command("umount", mountpoint)
+func (m Utilities) UnmountVolume(mountPoint string) error {
+	cmd := exec.Command("umount", mountPoint)
 	return cmd.Run()
 }
 
-func (m MountUtil) GetDeviceName() (string, error) {
+func (m Utilities) FormatVolume(volumeName string) error {
+	cmd := exec.Command("mkfs.ext4", volumeName)
+	return cmd.Run()
+}
+
+func (m Utilities) GetServerId() (string, error) {
+	output, err := ioutil.ReadFile("/sys/devices/virtual/dmi/id/product_uuid")
+
+	return string(output), err
+}
+
+func (m Utilities) GetDeviceName() (string, error) {
 	deviceBaseName := "/dev/%s"
 
 	var stdOut, stdErr bytes.Buffer
@@ -36,7 +46,7 @@ func (m MountUtil) GetDeviceName() (string, error) {
 
 	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("Error: %s", err.Error(), stdErr.String())
+		return "", fmt.Errorf("Error: %s, %s", err.Error(), stdErr.String())
 	}
 
 	resultObj := &Result{}
