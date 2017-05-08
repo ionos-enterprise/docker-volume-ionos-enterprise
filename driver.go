@@ -104,6 +104,12 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
+	err = d.utilities.FormatVolume(volumeName)
+	if err != nil {
+		log.Error(err.Error())
+		return volume.Response{Err: err.Error()}
+	}
+
 	volumePath := filepath.Join(d.mountPath, volumeName)
 
 	err = os.MkdirAll(volumePath, MountDirMode)
