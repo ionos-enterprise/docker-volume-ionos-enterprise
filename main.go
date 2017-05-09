@@ -21,6 +21,7 @@ type CommandLineArgs struct {
 }
 
 const (
+	DriverName              = "profitbricks"
 	DefaultBaseMetadataPath = "/etc/docker/plugins/profitbricks-volume"
 	DefaultBaseMountPath    = "/var/lib/docker-volume-profitbricks"
 	DefaultUnixSocketGroup  = "docker"
@@ -47,7 +48,7 @@ func main() {
 	handler := volume.NewHandler(driver)
 
 	//Start listening in a unix socket
-	err = handler.ServeUnix(*args.unixSocketGroup, 0)
+	err = handler.ServeUnix(*args.unixSocketGroup, DriverName)
 	if err != nil {
 		log.Fatalf("failed to bind to the Unix socket: %v", err)
 		os.Exit(1)
