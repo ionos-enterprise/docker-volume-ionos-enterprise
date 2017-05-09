@@ -33,10 +33,10 @@
 			"revisionTime": "2017-03-31T14:51:22Z"
 		},
 		{
-			"checksumSHA1": "4pBcXSAI7MWFZxBzvqvl109Op+E=",
+			"checksumSHA1": "9/gpnQVuH/eszYpzCGeG1AtOdMM=",
 			"path": "github.com/docker/go-plugins-helpers/sdk",
-			"revision": "f3a3876798ee4f63bee3e7ee8911a2c27e7710b9",
-			"revisionTime": "2016-08-02T13:54:27Z"
+			"revision": "8af45ff6ad5b7608853de51133c33e6638b02134",
+			"revisionTime": "2017-01-30T18:14:55Z"
 		},
 		{
 			"checksumSHA1": "bELvyBvmY5t2P/dCuCLxwTb1I+Q=",
