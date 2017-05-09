@@ -63,7 +63,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	args.profitbricksPassword = flag.StringP("profitbricks-password", "p", "", "ProfitBricks user name")
 
 	//ProfitBricks VDC, server and location parameters
-	args.datacenterId = flag.StringP("profitbricks-datacenter", "d", os.Getenv("PROFIT1BRICKS_DATACENTER"), "ProfitBricks Virtual Data Center ID")
+	args.datacenterId = flag.StringP("profitbricks-datacenter", "d", os.Getenv("PROFITBRICKS_DATACENTER"), "ProfitBricks Virtual Data Center ID")
 	args.size = flag.IntP("profitbricks-volume-size", "s", 50, "ProfitBricks Volume size")
 	args.diskType = flag.StringP("profitbricks-disk-type", "t", "HDD", "ProfitBricks Volume type")
 
