@@ -89,7 +89,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 		*args.profitbricksPassword = os.Getenv("PROFITBRICKS_PASSWORD")
 	}
 	if *args.profitbricksUsername == "" {
-		fmt.Println(fmt.Errorf("User name should be provided either using %q or using environment variable%q", "--profitbricks-username", "PROFITBRICKS_USERNAME"))
+		fmt.Println(fmt.Errorf("User name should be provided either using %q or using environment variable %q", "--profitbricks-username", "PROFITBRICKS_USERNAME"))
 		os.Exit(1)
 	}
 
@@ -99,7 +99,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	}
 
 	if *args.datacenterId == "" {
-		fmt.Println(fmt.Errorf("Please provide Virtual Data Center Id %q or using environment variable %q", "--profitbricks-datacenter [UUID]", "PROFITBRICKS_DATACENTER"))
+		fmt.Println(fmt.Errorf("Please provide Virtual Datagit  Center Id %q or using environment variable %q", "--profitbricks-datacenter [UUID]", "PROFITBRICKS_DATACENTER"))
 		os.Exit(1)
 	}
 
