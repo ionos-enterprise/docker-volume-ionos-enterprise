@@ -6,6 +6,7 @@ import (
 	"github.com/docker/go-plugins-helpers/volume"
 	flag "github.com/ogier/pflag"
 	"os"
+	"syscall"
 )
 
 type CommandLineArgs struct {
@@ -23,7 +24,7 @@ type CommandLineArgs struct {
 const (
 	DefaultBaseMetadataPath = "/etc/docker/plugins/profitbricks-volume"
 	DefaultBaseMountPath    = "/var/lib/docker-volume-profitbricks"
-	DefaultUnixSocketGroup  = "root"
+	DefaultUnixSocketGroup  = "docker"
 	DriverVersion           = "1.0.0"
 )
 
@@ -47,7 +48,7 @@ func main() {
 	handler := volume.NewHandler(driver)
 
 	//Start listening in a unix socket
-	err = handler.ServeUnix(*args.unixSocketGroup, 0)
+	err = handler.ServeUnix(*args.unixSocketGroup, syscall.Getegid())
 	if err != nil {
 		log.Fatalf("failed to bind to the Unix socket: %v", err)
 		os.Exit(1)
