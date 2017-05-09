@@ -88,8 +88,13 @@ func parseCommandLineArgs() *CommandLineArgs {
 	if os.Getenv("PROFITBRICKS_PASSWORD") != "" {
 		*args.profitbricksPassword = os.Getenv("PROFITBRICKS_PASSWORD")
 	}
-	if *args.profitbricksUsername == "" || *args.profitbricksPassword == "" {
-		fmt.Println(fmt.Errorf("Credentials should be provided either using %q, %q or using environment variables %q, %q", "--profitbricks-username", "--profitbricks-password", "PROFITBRICKS_USERNAME", "PROFITBRICKS_PASSWORD"))
+	if *args.profitbricksUsername == "" {
+		fmt.Println(fmt.Errorf("User name should be provided either using %q or using environment variable%q", "--profitbricks-username", "PROFITBRICKS_USERNAME"))
+		os.Exit(1)
+	}
+
+	if *args.profitbricksPassword == "" {
+		fmt.Println(fmt.Errorf("Password should be provided either using %q or using environment variables %q", "--profitbricks-password", "PROFITBRICKS_PASSWORD"))
 		os.Exit(1)
 	}
 
