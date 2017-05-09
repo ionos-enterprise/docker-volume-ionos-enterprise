@@ -59,6 +59,8 @@ func main() {
 func parseCommandLineArgs() *CommandLineArgs {
 	args := &CommandLineArgs{}
 
+	log.Info("USERNAME", os.Getenv("PROFITBRICKS_USERNAME"))
+	log.Info("PASSWORD", os.Getenv("PROFITBRICKS_PASSWORD"))
 	//Credentials
 	args.profitbricksUsername = flag.StringP("profitbricks-username", "u", "", "ProfitBricks user name")
 	args.profitbricksPassword = flag.StringP("profitbricks-password", "p", "", "ProfitBricks user name")
