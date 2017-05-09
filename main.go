@@ -71,7 +71,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	args.diskType = flag.StringP("profitbricks-disk-type", "t", "HDD", "ProfitBricks Volume type")
 
 	//Mount parameters
-	args.metadataPath = flag.String("metadata-path", DefaultBaseMetadataPath, "the path under which to store volume metadata")
+	args.metadataPath = flag.String("metad§ata-path", DefaultBaseMetadataPath, "the path under which to store volume metadata")
 	args.mountPath = flag.StringP("mount-path", "m", DefaultBaseMountPath, "the path under which to create the volume mount folders")
 	args.unixSocketGroup = flag.StringP("unix-socket-group", "g", DefaultUnixSocketGroup, "the group to assign to the Unix socket file")
 	args.version = flag.BoolP("version", "v", false, "outputs the driver version and exits")
@@ -82,8 +82,12 @@ func parseCommandLineArgs() *CommandLineArgs {
 		os.Exit(0)
 	}
 
-	*args.profitbricksUsername = os.Getenv("PROFITBRICKS_USERNAME")
-	*args.profitbricksPassword = os.Getenv("PROFITBRICKS_PASSWORD")
+	if os.Getenv("PROFITBRICKS_USERNAME") != "" {
+		*args.profitbricksUsername = os.Getenv("PROFITBRICKS_USERNAME")
+	}
+	if os.Getenv("PROFITBRICKS_PASSWORD") != "" {
+		*args.profitbricksPassword = os.Getenv("PROFITBRICKS_PASSWORD")
+	}
 	if *args.profitbricksUsername == "" || *args.profitbricksPassword == "" {
 		fmt.Println(fmt.Errorf("Credentials should be provided either using %q, %q or using environment variables %q, %q", "--profitbricks-username", "--profitbricks-password", "PROFITBRICKS_USERNAME", "PROFITBRICKS_PASSWORD"))
 		os.Exit(1)
