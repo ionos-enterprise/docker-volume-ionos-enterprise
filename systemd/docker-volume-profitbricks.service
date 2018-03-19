@@ -1,0 +1,12 @@
+[Unit]
+Description=Docker Volume Driver for ProfitBricks
+Before=docker.service
+After=network.target
+Requires=docker.service
+
+[Service]
+EnvironmentFile=/etc/profitbricks/docker-volume-profitbricks.default
+ExecStart=/usr/local/bin/docker-volume-profitbricks
+
+[Install]
+WantedBy=multi-user.target

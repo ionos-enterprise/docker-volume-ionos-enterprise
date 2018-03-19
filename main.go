@@ -46,7 +46,11 @@ func main() {
 	}
 
 	handler := volume.NewHandler(driver)
-
+	f, err := os.OpenFile("docker-volume-profitbricks.log", os.O_WRONLY|os.O_CREATE, 0755)
+	if err != nil {
+		log.Errorf("Error occured %s", err.Error())
+	}
+	log.SetOutput(f)
 	//Start listening in a unix socket
 	err = handler.ServeUnix(*args.unixSocketGroup, syscall.Getegid())
 	if err != nil {
