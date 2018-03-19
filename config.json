@@ -1,0 +1,15 @@
+{
+  "description": "ProfitBricks Volume plugin for Docker",
+  "documentation": "https://docs.docker.com/engine/extend/plugins/",
+  "entrypoint": ["/docker-volume-profitbricks"],
+  "network": {
+    "type": "host"
+  },
+  "interface" : {
+    "types": ["docker.volumedriver/1.0"],
+    "socket": "profitbricks.sock"
+  },
+  "linux": {
+    "capabilities": ["CAP_SYS_ADMIN"]
+  }
+}
