@@ -7,15 +7,15 @@ import (
 )
 
 type Server struct {
-	Id         string                     `json:"id,omitempty"`
-	Type_      string                     `json:"type,omitempty"`
-	Href       string                     `json:"href,omitempty"`
-	Metadata   *Metadata `json:"metadata,omitempty"`
-	Properties ServerProperties           `json:"properties,omitempty"`
-	Entities   *ServerEntities            `json:"entities,omitempty"`
-	Response   string                     `json:"Response,omitempty"`
-	Headers    *http.Header               `json:"headers,omitempty"`
-	StatusCode int                        `json:"headers,omitempty"`
+	Id         string           `json:"id,omitempty"`
+	Type_      string           `json:"type,omitempty"`
+	Href       string           `json:"href,omitempty"`
+	Metadata   *Metadata        `json:"metadata,omitempty"`
+	Properties ServerProperties `json:"properties,omitempty"`
+	Entities   *ServerEntities  `json:"entities,omitempty"`
+	Response   string           `json:"Response,omitempty"`
+	Headers    *http.Header     `json:"headers,omitempty"`
+	StatusCode int              `json:"headers,omitempty"`
 }
 
 type ServerProperties struct {
@@ -82,10 +82,6 @@ func GetServer(dcid, srvid string) Server {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Content-Type", FullHeader)
 	return toServer(do(req))
-}
-
-func UpdateServer(dcid string, srvid string, props ServerProperties) Server {
-	return PatchServer(dcid, srvid, props)
 }
 
 // PatchServer partial update of server properties passed in as jason []byte

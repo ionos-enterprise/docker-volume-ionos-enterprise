@@ -7,22 +7,22 @@ import (
 )
 
 type Nic struct {
-	Id         string                     `json:"id,omitempty"`
-	Type_      string                     `json:"type,omitempty"`
-	Href       string                     `json:"href,omitempty"`
-	Metadata   *Metadata `json:"metadata,omitempty"`
-	Properties NicProperties              `json:"properties,omitempty"`
-	Entities   *NicEntities               `json:"entities,omitempty"`
-	Response   string                     `json:"Response,omitempty"`
-	Headers    *http.Header               `json:"headers,omitempty"`
-	StatusCode int                        `json:"headers,omitempty"`
+	Id         string         `json:"id,omitempty"`
+	Type_      string         `json:"type,omitempty"`
+	Href       string         `json:"href,omitempty"`
+	Metadata   *Metadata      `json:"metadata,omitempty"`
+	Properties *NicProperties `json:"properties,omitempty"`
+	Entities   *NicEntities   `json:"entities,omitempty"`
+	Response   string         `json:"Response,omitempty"`
+	Headers    *http.Header   `json:"headers,omitempty"`
+	StatusCode int            `json:"headers,omitempty"`
 }
 
 type NicProperties struct {
 	Name           string   `json:"name,omitempty"`
 	Mac            string   `json:"mac,omitempty"`
 	Ips            []string `json:"ips,omitempty"`
-	Dhcp           bool     `json:"dhcp,omitempty"`
+	Dhcp           *bool     `json:"dhcp,omitempty"`
 	Lan            int      `json:"lan,omitempty"`
 	FirewallActive bool     `json:"firewallActive,omitempty"`
 	Nat            bool     `json:"nat,omitempty"`

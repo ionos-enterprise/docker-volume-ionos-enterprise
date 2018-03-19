@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"time"
 )
 
 //FullHeader is the standard header to include with all http requests except is_patch and is_command
@@ -20,11 +21,18 @@ const PatchHeader = "application/json"
 const CommandHeader = "application/x-www-form-urlencoded"
 
 var Depth = "5"
+var Pretty = true
 
 // SetDepth is used to set Depth
 func SetDepth(newdepth string) string {
 	Depth = newdepth
 	return Depth
+}
+
+// SetDepth is used to set Depth
+func SetPretty(pretty bool) bool {
+	Pretty = pretty
+	return Pretty
 }
 
 // mk_url  either:
@@ -49,10 +57,7 @@ func mk_url(path string) string {
 }
 
 func do(req *http.Request) Resp {
-	client := &http.Client{}
-	req.SetBasicAuth(Username, Passwd)
-	req.Header.Add("User-Agent", AgentHeader)
-	resp, err := client.Do(req)
+	resp, err := sendRetryingRequest(req)
 	if err != nil {
 		panic(err)
 	}
@@ -83,4 +88,51 @@ func is_command(path string, jason string) Resp {
 	req.Header.Add("Content-Type", CommandHeader)
 	req.Header.Add("User-Agent", AgentHeader)
 	return do(req)
+}
+
+func sendRetryingRequest(r *http.Request) (*http.Response, error) {
+	var br *bytes.Reader
+	if r.Body != nil {
+		buf, err := ioutil.ReadAll(r.Body)
+		r.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		br = bytes.NewReader(buf)
+	}
+
+	for {
+		if br != nil {
+			_, err := br.Seek(0, 0)
+			if err != nil {
+				return nil, err
+			}
+
+			r.Body = ioutil.NopCloser(br)
+		}
+
+		client := &http.Client{}
+		r.SetBasicAuth(Username, Passwd)
+		r.Header.Add("User-Agent", AgentHeader)
+		resp, err := client.Do(r)
+		if err != nil {
+			return resp, err
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := resp.Header.Get("Retry-After")
+			if retryAfter == "" {
+				return resp, err
+			}
+
+			sleep, err := time.ParseDuration(retryAfter + "s")
+			if err != nil {
+				return resp, err
+			}
+
+			time.Sleep(sleep)
+		} else {
+			return resp, err
+		}
+	}
 }
