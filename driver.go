@@ -3,89 +3,151 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
-	"github.com/docker/go-plugins-helpers/volume"
-	"github.com/profitbricks/profitbricks-sdk-go"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/docker/go-plugins-helpers/volume"
+	"github.com/profitbricks/profitbricks-sdk-go"
 )
 
+//Constances used at driver level
 const (
-	MetadataDirMode  = 0700
-	MetadataFileMode = 0600
-	MountDirMode     = os.ModeDir
+	metadataDirMode  = 0700
+	metadataFileMode = 0600
+	mountDirMode     = os.ModeDir
+	etag             = "docker-volume"
 )
 
+//Driver represents main class.
 type Driver struct {
-	region       string
-	dropletID    int
 	metadataPath string
 	mountPath    string
-	datacenterId string
-	serverId     string
+	datacenterID string
+	serverID     string
 	size         int
 	diskType     string
 	utilities    *Utilities
 	sync.RWMutex
-	volumes map[string]*VolumeState
+	volumes map[string]*volumeState
 }
 
-type VolumeState struct {
-	VolumeId   string
+//VolumeState represents a volume state in the  metadata.
+type volumeState struct {
+	VolumeID   string
 	MountPoint string
 	DeviceName string
 }
 
+//ProfitBricksDriver is a constuctor of the driver.
 func ProfitBricksDriver(utilities *Utilities, args CommandLineArgs) (*Driver, error) {
 
 	profitbricks.SetAuth(*args.profitbricksUsername, *args.profitbricksPassword)
 
-	err := os.MkdirAll(*args.metadataPath, MetadataDirMode)
+	err := os.MkdirAll(*args.metadataPath, metadataDirMode)
 	if err != nil {
 		return nil, err
 	}
 
-	err = os.MkdirAll(*args.mountPath, MountDirMode)
+	err = os.MkdirAll(*args.mountPath, mountDirMode)
 	if err != nil {
 		return nil, err
 	}
 
-	serverId, err := utilities.GetServerId()
+	serverID, err := utilities.GetServerID()
 
 	if err != nil {
 		log.Error(err)
 		return nil, err
 	}
 
-	log.Info("Server ID:", strings.ToLower(serverId))
+	log.Info("Server ID:", strings.ToLower(serverID))
 
-	return &Driver{
-		datacenterId: *args.datacenterId,
-		serverId:     strings.ToLower(serverId),
+	driver := &Driver{
+		datacenterID: *args.datacenterID,
+		serverID:     strings.ToLower(serverID),
 		size:         *args.size,
 		diskType:     *args.diskType,
-		volumes:      make(map[string]*VolumeState),
+		volumes:      make(map[string]*volumeState),
 		metadataPath: *args.metadataPath,
 		utilities:    utilities,
 		mountPath:    *args.mountPath,
-	}, nil
+	}
 
+	ierr := driver.initVolumesFromMetadata()
+	if ierr != nil {
+		return nil, ierr
+	}
+
+	return driver, nil
 }
 
+//Create is creating a new instance of a volume.
 func (d *Driver) Create(r volume.Request) volume.Response {
 	d.Lock()
 	defer d.Unlock()
+	log.Info("Creating a new volume")
+
+	isNewVolume := true
+	shouldDoFormatting := true
+	volumeID := ""
+	snapshotID := ""
+	diskSize := d.size
+	diskType := d.diskType
+	var err error
+
+	diskSizeParam := r.Options["volume_size"]
+	if len(diskSizeParam) > 0 {
+		diskSize, err = strconv.Atoi(diskSizeParam)
+		if err != nil {
+			log.Error(err.Error())
+			return volume.Response{Err: err.Error()}
+		}
+	}
+
+	diskTypeParam := r.Options["volume_type"]
+	if len(diskTypeParam) > 0 {
+		diskType = diskTypeParam
+	}
 
 	vol := profitbricks.Volume{
 		Properties: profitbricks.VolumeProperties{
-			Size:        d.size,
-			Type:        d.diskType,
+			Size:        diskSize,
+			Type:        diskType,
 			LicenceType: "OTHER",
-			Name:        fmt.Sprintf("docker-volume-profitbricks:%s", r.Name),
+			Name:        fmt.Sprintf("%s:%s", r.Name, etag),
 		},
+	}
+
+	//Tries to discover a volume and make sure it exists
+	volumeID, err = d.findVolumeByRequest(r)
+	if err != nil {
+		log.Error(err.Error())
+		return volume.Response{Err: err.Error()}
+	}
+
+	volumeID, isNewVolume, shouldDoFormatting, err = d.findVolumeByID(volumeID, &vol, isNewVolume, shouldDoFormatting, r)
+	if err != nil {
+		log.Error(err.Error())
+		return volume.Response{Err: err.Error()}
+	}
+
+	//Tries to discover a snapshot and make sure it exists
+	snapshotID, err = d.findSnapshotByName(r)
+	if err != nil {
+		log.Error(err.Error())
+		return volume.Response{Err: err.Error()}
+	}
+
+	snapshotID, isNewVolume, shouldDoFormatting, err = d.findSnapshotByID(snapshotID, volumeID, &vol, isNewVolume, shouldDoFormatting, r)
+	if err != nil {
+		log.Error(err.Error())
+		return volume.Response{Err: err.Error()}
 	}
 
 	result, err := d.utilities.getNewLsblk()
@@ -94,27 +156,47 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	createresp := profitbricks.CreateVolume(d.datacenterId, vol)
-	log.Info(createresp)
-	if createresp.StatusCode > 299 {
-		log.Errorf("failed to create a volume '%v'", r.Name)
-		return volume.Response{Err: string(vol.Response)}
+	if isNewVolume {
+		//Check volume name is unique in the datacenter
+		volumesresp := profitbricks.ListVolumes(d.datacenterID)
+		log.Info(volumesresp)
+		if volumesresp.StatusCode == 200 {
+			for _, v := range volumesresp.Items {
+				if v.Properties.Name == vol.Properties.Name {
+					errorAlreadyExists := fmt.Sprintf("failed to create volume '%s', volume with this name already exists in datacenter '%s'", r.Name, d.datacenterID)
+					log.Errorf(errorAlreadyExists)
+					return volume.Response{Err: errorAlreadyExists}
+				}
+			}
+		} else {
+			log.Errorf("failed to create a volume '%v'", r.Name)
+			return volume.Response{Err: string(volumesresp.Response)}
+		}
+
+		//Creates a volume
+		createresp := profitbricks.CreateVolume(d.datacenterID, vol)
+		log.Info(createresp)
+		if createresp.StatusCode > 299 {
+			log.Errorf("failed to create a volume '%v'", r.Name)
+			return volume.Response{Err: string(createresp.Response)}
+		}
+
+		volumeID = createresp.Id
+		log.Info("Volume provisioned:", vol.Properties.Name)
+
+		err = d.waitTillProvisioned(createresp.Headers.Get("Location"))
+
+		if err != nil {
+			log.Error(err.Error())
+			return volume.Response{Err: err.Error()}
+		}
 	}
 
-	volumeId := createresp.Id
-	log.Info("Volume provisioned:", vol.Properties.Name)
-
-	err = d.waitTillProvisioned(createresp.Headers.Get("Location"))
-
-	if err != nil {
-		log.Error(err.Error())
-		return volume.Response{Err: err.Error()}
-	}
-
-	attachResp := profitbricks.AttachVolume(d.datacenterId, d.serverId, volumeId)
+	//Attach volume
+	attachResp := profitbricks.AttachVolume(d.datacenterID, d.serverID, volumeID)
 	if attachResp.StatusCode > 299 {
-		log.Errorf("Arguments: %s %s %s", d.datacenterId, d.serverId, vol.Id)
-		log.Errorf("failed to attach a volume '%v', error msg: %q", r.Name, vol.Response)
+		log.Errorf("Arguments: %s %s %s", d.datacenterID, d.serverID, vol.Id)
+		log.Errorf("failed to attach a volume '%v', error msg: %q", r.Name, attachResp.Response)
 		return volume.Response{Err: string(vol.Response)}
 	}
 
@@ -126,21 +208,36 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	volumeName, err := d.utilities.GetDeviceName(d.metadataPath)
+	//Sets a metadata
+	log.Info("Getting device name from : ", d.metadataPath)
+	volumeName, foundDevice, err := d.utilities.GetDeviceName()
 	if err != nil {
 		log.Error(err.Error())
 		return volume.Response{Err: err.Error()}
 	}
 
-	err = d.utilities.FormatVolume(volumeName)
-	if err != nil {
-		log.Error(err.Error())
-		return volume.Response{Err: err.Error()}
+	if foundDevice {
+		//Sets a partition
+		if shouldDoFormatting {
+			log.Info("Starting formatting: VolumeName: ", volumeName, " VolumeId: ", volumeID)
+			err = d.utilities.FormatVolume(volumeName, volumeID)
+			if err != nil {
+				log.Error(err.Error())
+				return volume.Response{Err: err.Error()}
+			}
+		} else {
+			log.Info("Adjusting volume: VolumeName: ", volumeName, " VolumeId: ", volumeID)
+			err = d.utilities.TuneVolume(volumeName, volumeID)
+			if err != nil {
+				log.Error(err.Error())
+				return volume.Response{Err: err.Error()}
+			}
+		}
 	}
 
-	volumePath := filepath.Join(d.mountPath, volumeName)
-
-	err = os.MkdirAll(volumePath, MountDirMode)
+	volumePath := filepath.Join(d.mountPath, volumeID)
+	log.Info("Make directory for VolumePath: ", volumePath)
+	err = os.MkdirAll(volumePath, mountDirMode)
 	if err != nil {
 		log.Error(err.Error())
 		return volume.Response{Err: err.Error()}
@@ -148,21 +245,23 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 
 	metadataFilePath := filepath.Join(d.metadataPath, r.Name)
 
+	log.Infof("Metadata file path %s", metadataFilePath)
+
 	metadataFile, err := os.Create(metadataFilePath)
 	if err != nil {
 		log.Errorf("failed to create metadata file '%v' for volume '%v'", metadataFilePath, r.Name)
 		return volume.Response{Err: err.Error()}
 	}
 
-	err = metadataFile.Chmod(MetadataFileMode)
+	err = metadataFile.Chmod(metadataFileMode)
 	if err != nil {
 		os.Remove(metadataFilePath)
 		log.Errorf("failed to change the mode for the metadata file '%v' for volume '%v'", metadataFilePath, r.Name)
 		return volume.Response{Err: err.Error()}
 	}
 
-	d.volumes[r.Name] = &VolumeState{
-		VolumeId:   volumeId,
+	d.volumes[r.Name] = &volumeState{
+		VolumeID:   volumeID,
 		MountPoint: volumePath,
 		DeviceName: volumeName,
 	}
@@ -176,38 +275,96 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 	}
 
 	d.utilities.WriteLsblk(metadataFilePath, result)
-	//err = d.utilities.WriteFile(metadataFilePath, jsn, 0644)
+
+	detachResp := profitbricks.DetachVolume(d.datacenterID, d.serverID, volumeID)
+	if detachResp.StatusCode > 299 {
+		log.Errorf("failed to detach volume '%v' on server '%v'", volumeID, d.serverID)
+		return volume.Response{Err: string(detachResp.Body)}
+	}
+
+	if detachResp.StatusCode > 299 {
+		log.Errorf("failed to detach volume '%s' from server '%s'", volumeID, d.serverID)
+		return volume.Response{Err: string(detachResp.Body)}
+	}
+
+	err = d.waitTillProvisioned(detachResp.Headers.Get("Location"))
+	if err != nil {
+		return volume.Response{Err: err.Error()}
+	}
+
 	return volume.Response{}
 }
 
+//Mount is attaching and mounting a volume.
 func (d *Driver) Mount(r volume.MountRequest) volume.Response {
 	d.Lock()
 	defer d.Unlock()
 	log.Infof("Mounting Volume: %s", r.Name)
 
-	log.Info(d.volumes[r.Name])
-	err := d.utilities.MountVolume(d.volumes[r.Name].DeviceName, d.volumes[r.Name].MountPoint)
+	vol := d.volumes[r.Name]
+	log.Info(vol.DeviceName)
+
+	attachResp := profitbricks.AttachVolume(d.datacenterID, d.serverID, vol.VolumeID)
+	if attachResp.StatusCode > 299 {
+		log.Errorf("Arguments: %s %s %s", d.datacenterID, d.serverID, vol.VolumeID)
+		log.Errorf("failed to attach a volume '%v', error msg: %q", r.Name, attachResp.Response)
+		return volume.Response{Err: string(attachResp.Response)}
+	}
+
+	err := d.waitTillProvisioned(attachResp.Headers.Get("Location"))
+	log.Info("Volume attached:", attachResp.Properties.Name)
+
+	volumePath := filepath.Join("/dev", "disk", "by-uuid", vol.VolumeID)
+	err = d.utilities.MountVolume(volumePath, vol.MountPoint)
 	if err != nil {
 		log.Error(err.Error())
 		return volume.Response{Err: err.Error()}
 	}
 
-	return volume.Response{}
+	return volume.Response{
+		Mountpoint: vol.MountPoint,
+	}
 }
 
+//getVolumeDevicePath returning device path with uuid.
+func (d *Driver) getVolumeDevicePath(volumeID string) string {
+	return filepath.Join("/dev", "disk", "by-uuid", volumeID)
+}
+
+//Unmount is detacing and unmounting a volume.
 func (d *Driver) Unmount(r volume.UnmountRequest) volume.Response {
 	d.Lock()
 	defer d.Unlock()
 	log.Info("Unmounting Volume")
 
-	err := d.utilities.UnmountVolume(d.volumes[r.Name].MountPoint)
+	vol := d.volumes[r.Name]
+	volumePath := d.getVolumeDevicePath(vol.VolumeID)
+	err := d.utilities.UnmountVolume(volumePath)
 	if err != nil {
 		log.Error("Error occured while unmounting volume", err.Error())
 		return volume.Response{Err: err.Error()}
 	}
+
+	detachResp := profitbricks.DetachVolume(d.datacenterID, d.serverID, vol.VolumeID)
+	if detachResp.StatusCode > 299 {
+		log.Errorf("failed to detach volume '%v' on server '%v'", vol.VolumeID, d.serverID)
+		return volume.Response{Err: string(detachResp.Body)}
+	}
+
+	if detachResp.StatusCode > 299 {
+		log.Errorf("failed to detach volume '%s' from server '%s'", vol.VolumeID, d.serverID)
+		return volume.Response{Err: string(detachResp.Body)}
+	}
+
+	err = d.waitTillProvisioned(detachResp.Headers.Get("Location"))
+	if err != nil {
+		return volume.Response{Err: err.Error()}
+	}
+
 	return volume.Response{}
 }
 
+//List is showing all volumes related for the driver.
 func (d *Driver) List(r volume.Request) volume.Response {
 	d.Lock()
 	defer d.Unlock()
@@ -223,6 +380,7 @@ func (d *Driver) List(r volume.Request) volume.Response {
 	return volume.Response{Volumes: volumes}
 }
 
+//Get is showing a volume meta info.
 func (d *Driver) Get(r volume.Request) volume.Response {
 	log.Info("Getting a Volume")
 
@@ -237,12 +395,13 @@ func (d *Driver) Get(r volume.Request) volume.Response {
 	return volume.Response{Volume: vol}
 }
 
+//Remove is removing volume from a server and the Profitbricks data center.
 func (d *Driver) Remove(r volume.Request) volume.Response {
 	d.Lock()
 	defer d.Unlock()
 	log.Info("Iterating throug map")
 
-	vol := &VolumeState{}
+	vol := &volumeState{}
 	var key string
 	for k, v := range d.volumes {
 		log.Infof("Key %s", k)
@@ -254,16 +413,23 @@ func (d *Driver) Remove(r volume.Request) volume.Response {
 		}
 	}
 
-	rjson, _ := json.MarshalIndent(r, "", "\t")
-	log.Infof("Request: %s", string(rjson))
-	log.Infof("Removing volume %s ", r.Name)
-	jsn, _ := json.MarshalIndent(d.volumes, "", "\t")
-	log.Info("Volumes: ", string(jsn))
-	log.Info("Volume: ", vol)
-	log.Infof("Removing volume with parameters: %s, %s, %s", d.datacenterId, d.serverId, vol.VolumeId)
-	resp := profitbricks.DetachVolume(d.datacenterId, d.serverId, vol.VolumeId)
+	//Try to detach the volume, so it could be deleted.
+	resp := profitbricks.DetachVolume(d.datacenterID, d.serverID, vol.VolumeID)
+	alreadyRemoved := resp.StatusCode == 404
+	if resp.StatusCode > 299 && !alreadyRemoved {
+		log.Errorf("failed to detach volume '%s' from server '%s'", vol.VolumeID, d.serverID)
+		return volume.Response{Err: string(resp.Body)}
+	}
+	if !alreadyRemoved {
+		err := d.waitTillProvisioned(resp.Headers.Get("Location"))
+		if err != nil {
+			return volume.Response{Err: err.Error()}
+		}
+	}
+
+	resp = profitbricks.DeleteVolume(d.datacenterID, vol.VolumeID)
 	if resp.StatusCode > 299 {
-		log.Errorf("failed to create metadata file '%v' for volume '%v'", d.metadataPath, r.Name)
+		log.Errorf("failed to delete volume '%s' from data center '%s'", vol.VolumeID, d.datacenterID)
 		return volume.Response{Err: string(resp.Body)}
 	}
 
@@ -272,14 +438,17 @@ func (d *Driver) Remove(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	resp = profitbricks.DeleteVolume(d.datacenterId, vol.VolumeId)
-	if resp.StatusCode > 299 {
-		log.Errorf("failed to create metadata file '%v' for volume '%v'", d.metadataPath, r.Name)
-		return volume.Response{Err: string(resp.Body)}
+	//Remove mount folder
+	err = os.Remove(vol.MountPoint)
+	if err != nil {
+		log.Error(err.Error())
+		return volume.Response{Err: err.Error()}
 	}
 
-	err = d.waitTillProvisioned(resp.Headers.Get("Location"))
+	metadataFilePath := filepath.Join(d.metadataPath, key)
+	err = os.Remove(metadataFilePath)
 	if err != nil {
+		log.Error(err.Error())
 		return volume.Response{Err: err.Error()}
 	}
 
@@ -292,6 +461,7 @@ func (d *Driver) Remove(r volume.Request) volume.Response {
 	return volume.Response{}
 }
 
+//Path is returing path info.
 func (d *Driver) Path(r volume.Request) volume.Response {
 	d.Lock()
 	defer d.Unlock()
@@ -303,16 +473,202 @@ func (d *Driver) Path(r volume.Request) volume.Response {
 	return volume.Response{Err: fmt.Sprintf("Volume %q does not exist", r.Name)}
 }
 
+//Capabilities is returning info about scope.
 func (d *Driver) Capabilities(r volume.Request) volume.Response {
 	log.Infof("[Capabilities]: %+v", r)
-	return volume.Response{Capabilities: volume.Capability{Scope: "profitbricks/docker-volume-profitbricks"}}
+	return volume.Response{Capabilities: volume.Capability{Scope: "global"}}
 }
 
+//findVolumeByName is trying to discover a volume by name.
+func (d *Driver) findVolumeByRequest(r volume.Request) (string, error) {
+	volumeName := r.Options["volume_name"]
+	if len(volumeName) > 0 {
+		if r.Name != volumeName {
+			return "", fmt.Errorf("Volume name %s and volume_name parameter %s have to be the same", r.Name, volumeName)
+		}
+		return d.findVolumeByName(volumeName)
+	}
+
+	return "", nil
+}
+
+//findVolumeByName is trying to discover a volume by name.
+func (d *Driver) findVolumeByName(volumeName string) (string, error) {
+	if len(volumeName) > 0 {
+		volumeID := ""
+
+		log.Info("Using provided volume_name: ", volumeName)
+		//Check volume name is unique in the datacenter
+		volumesresp := profitbricks.ListVolumes(d.datacenterID)
+		// log.Info(volumesresp)
+		if volumesresp.StatusCode == 200 {
+			for _, v := range volumesresp.Items {
+				if v.Properties.Name == volumeName {
+					volumeID = v.Id
+					log.Infof("Found volume uuid %s with name s%", volumeID, volumeName)
+					return volumeID, nil
+				}
+			}
+			//Try to discover volume with etag suffix
+			if !strings.HasSuffix(volumeName, etag) {
+				volumeSuffixName := fmt.Sprintf("%s:%s", volumeName, etag)
+				for _, v := range volumesresp.Items {
+					if v.Properties.Name == volumeSuffixName {
+						volumeID = v.Id
+						log.Infof("Found volume uuid %s with name s%", volumeID, volumeSuffixName)
+						return volumeID, nil
+					}
+				}
+			}
+			return "", fmt.Errorf("Volume with name %s could not be found", volumeName)
+		}
+		log.Errorf("failed to create a volume '%v'", volumeName)
+		return "", fmt.Errorf(volumesresp.Response)
+	}
+
+	return "", nil
+}
+
+//findVolumeByID is trying to discover a volume by volumeId.
+func (d *Driver) findVolumeByID(volumeID string, vol *profitbricks.Volume, isNewVolume bool, shouldDoFormatting bool, r volume.Request) (string, bool, bool, error) {
+	log.Debugf("Using volumeID before the options. Value: %s", volumeID)
+	if !d.utilities.IsUUID(volumeID) {
+		volumeID = r.Options["volume_id"]
+		log.Debugf("Using volumeID from the options. Value: %s", volumeID)
+	}
+	if d.utilities.IsUUID(volumeID) {
+		log.Infof("Using provided volume_id: %s", volumeID)
+
+		volResp := profitbricks.GetVolume(d.datacenterID, volumeID)
+		if volResp.StatusCode != 200 {
+			return "", isNewVolume, shouldDoFormatting, fmt.Errorf("Volume with uuid %s could not be found", volumeID)
+		}
+		log.Info(volResp)
+		//Adding docker suffix tag in case it is not added
+		if !(strings.HasSuffix(volResp.Properties.Name, etag)) {
+			log.Infof("Update name of the volume %s with the suffix %s", volResp.Properties.Name, etag)
+			volProps := profitbricks.VolumeProperties{
+				Name: fmt.Sprintf("%s:%s", r.Name, etag),
+			}
+
+			volEditResp := profitbricks.PatchVolume(d.datacenterID, volumeID, volProps)
+			if volEditResp.StatusCode != 202 {
+				return "", isNewVolume, shouldDoFormatting, fmt.Errorf("Volume with uuid %s could not be updated", volumeID)
+			}
+
+			vol.Properties.Name = volEditResp.Properties.Name
+
+		}
+
+		isNewVolume = false
+		shouldDoFormatting = false
+	}
+
+	return volumeID, isNewVolume, shouldDoFormatting, nil
+}
+
+//findSnapshotByName is trying to discover a snapshot by name.
+func (d *Driver) findSnapshotByName(r volume.Request) (string, error) {
+	snapshotName := r.Options["snapshot_name"]
+	snapshotID := ""
+	if len(snapshotName) > 0 {
+		log.Info("Using provided snapshot_name: ", snapshotName)
+		//Check volume name is unique in the datacenter
+		snapshotsresp := profitbricks.ListSnapshots()
+		log.Info(snapshotsresp)
+		if snapshotsresp.StatusCode == 200 {
+			for _, v := range snapshotsresp.Items {
+				if v.Properties.Name == snapshotName {
+					snapshotID = v.Id
+				}
+			}
+			if !d.utilities.IsUUID(snapshotID) {
+				return "", fmt.Errorf("Snapshot with name %s could not be found", snapshotName)
+			}
+		} else {
+			log.Errorf("failed to create a volume '%v'", r.Name)
+			return "", fmt.Errorf(snapshotsresp.Response)
+		}
+	}
+
+	return "", nil
+}
+
+//findSnapshotByID is trying to discover a snapshot by snapshotId.
+func (d *Driver) findSnapshotByID(snapshotID string, volumeID string, vol *profitbricks.Volume, isNewVolume bool, shouldDoFormatting bool, r volume.Request) (string, bool, bool, error) {
+	if !d.utilities.IsUUID(volumeID) && d.utilities.IsUUID(snapshotID) {
+		snapshotID = r.Options["snapshot_id"]
+	}
+	if !d.utilities.IsUUID(volumeID) && d.utilities.IsUUID(snapshotID) {
+		log.Info("Using provided shanpshot: ", snapshotID)
+
+		snapshotResp := profitbricks.GetSnapshot(snapshotID)
+		if snapshotResp.StatusCode != 200 {
+			return "", isNewVolume, shouldDoFormatting, fmt.Errorf("Snapshot with uuid %s could not be found", snapshotID)
+		}
+		log.Info(snapshotResp)
+		vol.Properties.Image = snapshotID
+		vol.Properties.LicenceType = ""
+		isNewVolume = true
+		shouldDoFormatting = false
+	}
+
+	return snapshotID, isNewVolume, shouldDoFormatting, nil
+}
+
+//initVolumesFromMetadata init volumes from the meta data.
+func (d *Driver) initVolumesFromMetadata() error {
+	metadataFiles, ferr := ioutil.ReadDir(d.metadataPath)
+	if ferr != nil {
+		return ferr
+	}
+
+	for _, metadataFile := range metadataFiles {
+		volumeName := metadataFile.Name()
+		metadataFilePath := filepath.Join(d.metadataPath, volumeName)
+
+		log.Infof("Initializing volume '%v' from metadata file '%v'", volumeName, metadataFilePath)
+
+		volumeState, ierr := d.initVolume(volumeName)
+		if ierr != nil {
+			return ierr
+		}
+
+		d.volumes[volumeName] = volumeState
+	}
+
+	return nil
+}
+
+//initVolume init volume from the API.
+func (d *Driver) initVolume(name string) (*volumeState, error) {
+	volumeID, _ := d.findVolumeByName(name)
+	if volumeID == "" {
+		log.Errorf("Volume '%v' not found", name)
+		return nil, fmt.Errorf("Volume '%v' not found", name)
+	}
+
+	volumePath := filepath.Join(d.mountPath, volumeID)
+
+	merr := os.MkdirAll(volumePath, mountDirMode)
+	if merr != nil {
+		log.Errorf("failed to create the volume mount path '%v'", volumePath)
+		return nil, fmt.Errorf("failed to create the volume mount path '%v'", volumePath)
+	}
+
+	d.utilities.UnmountVolume(d.getVolumeDevicePath(volumeID))
+
+	volumeState := &volumeState{
+		VolumeID:   volumeID,
+		MountPoint: volumePath,
+	}
+
+	return volumeState, nil
+}
+
+//waitTillProvisioned is wating till a Profitbricks long executing request is done.
 func (d *Driver) waitTillProvisioned(path string) error {
-
-	waitCount := 50
-
-	for i := 0; i < waitCount; i++ {
+	for {
 		request := profitbricks.GetRequestStatus(path)
 		log.Debugf("Request status: %s", request.Metadata.Status)
 		log.Debugf("Request status path: %s", path)
@@ -324,8 +680,6 @@ func (d *Driver) waitTillProvisioned(path string) error {
 
 			return fmt.Errorf("Request failed with following error: %s", request.Metadata.Message)
 		}
-		time.Sleep(5 * time.Second)
-		i++
+		time.Sleep(10 * time.Second)
 	}
-	return fmt.Errorf("Timeout has expired %s", "")
 }
