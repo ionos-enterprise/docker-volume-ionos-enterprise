@@ -52,6 +52,10 @@ func ProfitBricksDriver(utilities *Utilities, args CommandLineArgs) (*Driver, er
 		*args.profitbricksPassword,
 	)
 
+	if len(*args.profitbricksEndpoint) > 0 {
+		client.SetURL(*args.profitbricksEndpoint)
+	}
+
 	err := os.MkdirAll(*args.metadataPath, metadataDirMode)
 	if err != nil {
 		return nil, err

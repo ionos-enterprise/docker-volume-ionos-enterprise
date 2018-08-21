@@ -11,6 +11,7 @@ import (
 
 //CommandLineArgs represent the parameters application could accept.
 type CommandLineArgs struct {
+	profitbricksEndpoint *string
 	profitbricksUsername *string
 	profitbricksPassword *string
 	metadataPath         *string
@@ -45,11 +46,11 @@ func main() {
 	}
 	log.SetLevel(logLevel)
 
-	log.Info(*args.profitbricksUsername)
-	log.Info(*args.metadataPath)
-	log.Info(*args.mountPath)
-	log.Info(*args.unixSocketGroup)
-	log.Info(*args.version)
+	log.Infof("initialization parameters: profitbricks-endpoint=%s profitbricks-username=%s credential-file-path=%s profitbricks-datacenter-id=%s profitbricks-volume-size=%d profitbricks-disk-type=%s metadata-path=%s mount-path=%s unix-socket-group=%s version=%s log-level=%s",
+		*args.profitbricksEndpoint, *args.profitbricksUsername,
+		*args.credentialFilePath, *args.datacenterID, *args.size,
+		*args.diskType, *args.metadataPath, *args.mountPath,
+		*args.unixSocketGroup, *args.version, *args.logLevel)
 
 	driver, err := ProfitBricksDriver(mountUtil, *args)
 	if err != nil {
@@ -72,6 +73,7 @@ func parseCommandLineArgs(mountUtil *Utilities) *CommandLineArgs {
 	var err error
 
 	//Credentials
+	args.profitbricksEndpoint = flag.StringP("profitbricks-endpoint", "e", "", "ProfitBricks endpoint")
 	args.profitbricksUsername = flag.StringP("profitbricks-username", "u", "", "ProfitBricks username")
 	args.profitbricksPassword = flag.StringP("profitbricks-password", "p", "", "ProfitBricks password")
 	args.credentialFilePath = flag.String("credential-file-path", "", "the path to the credential file")
@@ -97,6 +99,9 @@ func parseCommandLineArgs(mountUtil *Utilities) *CommandLineArgs {
 	}
 
 	//Try to get values from the environment variables
+	if os.Getenv("PROFITBRICKS_ENDPOINT") != "" {
+		*args.profitbricksEndpoint = os.Getenv("PROFITBRICKS_ENDPOINT")
+	}
 	if os.Getenv("PROFITBRICKS_USERNAME") != "" {
 		*args.profitbricksUsername = os.Getenv("PROFITBRICKS_USERNAME")
 	}

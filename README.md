@@ -72,6 +72,8 @@ Usage of ./docker-volume-profitbricks:
     	ProfitBricks Virtual Data Center ID (default "863d743f-1730-4ffa-86a4-ee66a3357963")
   -t, --profitbricks-disk-type string
     	ProfitBricks Volume type (default "HDD")
+  -e, --profitbricks-endpoint string
+      ProfitBricks endpoint
   -p, --profitbricks-password string
     	ProfitBricks password
   -u, --profitbricks-username string
