@@ -172,7 +172,7 @@ func (m Utilities) GetDeviceName() (string, bool, error) {
 	newList, err := m.getNewLsblk()
 
 	for _, device := range newList.Devices {
-		// Condition explainations:
+		// Condition explanations:
 		// Every attached volume is type of a disk
 		// vda is reserved for OS based disk
 		// By default UUID is not assign to a attached volume, and we will make sure to do that for each of them
