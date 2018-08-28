@@ -150,12 +150,6 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	result, err := d.utilities.getNewLsblk()
-	if err != nil {
-		log.Error(err.Error())
-		return volume.Response{Err: err.Error()}
-	}
-
 	if isNewVolume {
 		//Check volume name is unique in the datacenter
 		volumesresp := profitbricks.ListVolumes(d.datacenterID)
@@ -273,8 +267,6 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 	if err != nil {
 		return volume.Response{Err: err.Error()}
 	}
-
-	d.utilities.WriteLsblk(metadataFilePath, result)
 
 	detachResp := profitbricks.DetachVolume(d.datacenterID, d.serverID, volumeID)
 	if detachResp.StatusCode > 299 {
