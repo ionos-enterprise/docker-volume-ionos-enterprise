@@ -51,10 +51,16 @@
 			"revisionTime": "2016-01-29T22:01:14Z"
 		},
 		{
-			"checksumSHA1": "e4UaO4yWGgCFj2GzNAEYB8gTnPU=",
+			"checksumSHA1": "NUA10ZEhnawSPfTQiLMInYUMXKQ=",
 			"path": "github.com/profitbricks/profitbricks-sdk-go",
-			"revision": "ead214cddf6bff25611f6c133320e6b0feb6b83e",
-			"revisionTime": "2017-04-19T15:10:34Z"
+			"revision": "7b96ba54985dd7ab7c944105c76dc6b35152a3c2",
+			"revisionTime": "2018-07-03T14:07:10Z",
+			"version": "v5.0.1",
+			"versionExact": "v5.0.1"
+		},
+		{
+			"path": "github.com/profitbricks/profitbricks-sdk-go:v5.0.1",
+			"revision": ""
 		},
 		{
 			"checksumSHA1": "LvdVRE0FqdR68SvVpRkHs1rxhcA=",
@@ -63,5 +69,5 @@
 			"revisionTime": "2016-11-15T21:05:04Z"
 		}
 	],
-	"rootPath": "github.com/StackPointCloud/docker-volume-profitbricks"
+	"rootPath": "github.com/profitbricks/docker-volume-profitbricks"
 }

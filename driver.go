@@ -35,6 +35,7 @@ type Driver struct {
 	utilities    *Utilities
 	sync.RWMutex
 	volumes map[string]*volumeState
+	client  *profitbricks.Client
 }
 
 //VolumeState represents a volume state in the  metadata.
@@ -46,8 +47,10 @@ type volumeState struct {
 
 //ProfitBricksDriver is a constuctor of the driver.
 func ProfitBricksDriver(utilities *Utilities, args CommandLineArgs) (*Driver, error) {
-
-	profitbricks.SetAuth(*args.profitbricksUsername, *args.profitbricksPassword)
+	client := profitbricks.NewClient(
+		*args.profitbricksUsername,
+		*args.profitbricksPassword,
+	)
 
 	err := os.MkdirAll(*args.metadataPath, metadataDirMode)
 	if err != nil {
@@ -77,6 +80,7 @@ func ProfitBricksDriver(utilities *Utilities, args CommandLineArgs) (*Driver, er
 		metadataPath: *args.metadataPath,
 		utilities:    utilities,
 		mountPath:    *args.mountPath,
+		client:       client,
 	}
 
 	ierr := driver.initVolumesFromMetadata()
@@ -152,30 +156,31 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 
 	if isNewVolume {
 		//Check volume name is unique in the datacenter
-		volumesresp := profitbricks.ListVolumes(d.datacenterID)
-		log.Info(volumesresp)
-		if volumesresp.StatusCode == 200 {
-			for _, v := range volumesresp.Items {
-				if v.Properties.Name == vol.Properties.Name {
-					errorAlreadyExists := fmt.Sprintf("failed to create volume '%s', volume with this name already exists in datacenter '%s'", r.Name, d.datacenterID)
-					log.Errorf(errorAlreadyExists)
-					return volume.Response{Err: errorAlreadyExists}
-				}
-			}
-		} else {
+		volumesresp, err := d.client.ListVolumes(d.datacenterID)
+		if err != nil {
 			log.Errorf("failed to create a volume '%v'", r.Name)
-			return volume.Response{Err: string(volumesresp.Response)}
+			return volume.Response{Err: err.Error()}
+		}
+
+		log.Info(volumesresp)
+
+		for _, v := range volumesresp.Items {
+			if v.Properties.Name == vol.Properties.Name {
+				errorAlreadyExists := fmt.Sprintf("failed to create volume '%s', volume with this name already exists in datacenter '%s'", r.Name, d.datacenterID)
+				log.Errorf(errorAlreadyExists)
+				return volume.Response{Err: errorAlreadyExists}
+			}
 		}
 
 		//Creates a volume
-		createresp := profitbricks.CreateVolume(d.datacenterID, vol)
+		createresp, err := d.client.CreateVolume(d.datacenterID, vol)
 		log.Info(createresp)
-		if createresp.StatusCode > 299 {
+		if err != nil {
 			log.Errorf("failed to create a volume '%v'", r.Name)
-			return volume.Response{Err: string(createresp.Response)}
+			return volume.Response{Err: err.Error()}
 		}
 
-		volumeID = createresp.Id
+		volumeID = createresp.ID
 		log.Info("Volume provisioned:", vol.Properties.Name)
 
 		err = d.waitTillProvisioned(createresp.Headers.Get("Location"))
@@ -187,11 +192,11 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 	}
 
 	//Attach volume
-	attachResp := profitbricks.AttachVolume(d.datacenterID, d.serverID, volumeID)
-	if attachResp.StatusCode > 299 {
-		log.Errorf("Arguments: %s %s %s", d.datacenterID, d.serverID, vol.Id)
+	attachResp, err := d.client.AttachVolume(d.datacenterID, d.serverID, volumeID)
+	if err != nil {
+		log.Errorf("Arguments: %s %s %s", d.datacenterID, d.serverID, vol.ID)
 		log.Errorf("failed to attach a volume '%v', error msg: %q", r.Name, attachResp.Response)
-		return volume.Response{Err: string(vol.Response)}
+		return volume.Response{Err: err.Error()}
 	}
 
 	err = d.waitTillProvisioned(attachResp.Headers.Get("Location"))
@@ -268,18 +273,13 @@ func (d *Driver) Create(r volume.Request) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	detachResp := profitbricks.DetachVolume(d.datacenterID, d.serverID, volumeID)
-	if detachResp.StatusCode > 299 {
+	detachResp, err := d.client.DetachVolume(d.datacenterID, d.serverID, volumeID)
+	if err != nil {
 		log.Errorf("failed to detach volume '%v' on server '%v'", volumeID, d.serverID)
-		return volume.Response{Err: string(detachResp.Body)}
+		return volume.Response{Err: err.Error()}
 	}
 
-	if detachResp.StatusCode > 299 {
-		log.Errorf("failed to detach volume '%s' from server '%s'", volumeID, d.serverID)
-		return volume.Response{Err: string(detachResp.Body)}
-	}
-
-	err = d.waitTillProvisioned(detachResp.Headers.Get("Location"))
+	err = d.waitTillProvisioned(detachResp.Get("Location"))
 	if err != nil {
 		return volume.Response{Err: err.Error()}
 	}
@@ -296,14 +296,14 @@ func (d *Driver) Mount(r volume.MountRequest) volume.Response {
 	vol := d.volumes[r.Name]
 	log.Info(vol.DeviceName)
 
-	attachResp := profitbricks.AttachVolume(d.datacenterID, d.serverID, vol.VolumeID)
-	if attachResp.StatusCode > 299 {
+	attachResp, err := d.client.AttachVolume(d.datacenterID, d.serverID, vol.VolumeID)
+	if err != nil {
 		log.Errorf("Arguments: %s %s %s", d.datacenterID, d.serverID, vol.VolumeID)
 		log.Errorf("failed to attach a volume '%v', error msg: %q", r.Name, attachResp.Response)
-		return volume.Response{Err: string(attachResp.Response)}
+		return volume.Response{Err: err.Error()}
 	}
 
-	err := d.waitTillProvisioned(attachResp.Headers.Get("Location"))
+	err = d.waitTillProvisioned(attachResp.Headers.Get("Location"))
 	log.Info("Volume attached:", attachResp.Properties.Name)
 
 	volumePath := filepath.Join("/dev", "disk", "by-uuid", vol.VolumeID)
@@ -337,18 +337,13 @@ func (d *Driver) Unmount(r volume.UnmountRequest) volume.Response {
 		return volume.Response{Err: err.Error()}
 	}
 
-	detachResp := profitbricks.DetachVolume(d.datacenterID, d.serverID, vol.VolumeID)
-	if detachResp.StatusCode > 299 {
+	detachResp, err := d.client.DetachVolume(d.datacenterID, d.serverID, vol.VolumeID)
+	if err != nil {
 		log.Errorf("failed to detach volume '%v' on server '%v'", vol.VolumeID, d.serverID)
-		return volume.Response{Err: string(detachResp.Body)}
+		return volume.Response{Err: err.Error()}
 	}
 
-	if detachResp.StatusCode > 299 {
-		log.Errorf("failed to detach volume '%s' from server '%s'", vol.VolumeID, d.serverID)
-		return volume.Response{Err: string(detachResp.Body)}
-	}
-
-	err = d.waitTillProvisioned(detachResp.Headers.Get("Location"))
+	err = d.waitTillProvisioned(detachResp.Get("Location"))
 	if err != nil {
 		return volume.Response{Err: err.Error()}
 	}
@@ -405,27 +400,36 @@ func (d *Driver) Remove(r volume.Request) volume.Response {
 		}
 	}
 
+	alreadyRemoved := false
 	//Try to detach the volume, so it could be deleted.
-	resp := profitbricks.DetachVolume(d.datacenterID, d.serverID, vol.VolumeID)
-	alreadyRemoved := resp.StatusCode == 404
-	if resp.StatusCode > 299 && !alreadyRemoved {
-		log.Errorf("failed to detach volume '%s' from server '%s'", vol.VolumeID, d.serverID)
-		return volume.Response{Err: string(resp.Body)}
+	resp, err := d.client.DetachVolume(d.datacenterID, d.serverID, vol.VolumeID)
+	if err != nil {
+		if apiError, ok := err.(profitbricks.ApiError); ok {
+			if apiError.HttpStatusCode() == 404 {
+				alreadyRemoved = true
+			} else {
+				log.Errorf("failed to detach volume '%v' on server '%v'", vol.VolumeID, d.serverID)
+				return volume.Response{Err: err.Error()}
+			}
+		} else {
+			return volume.Response{Err: fmt.Sprintf("invalid response: %s", err.Error())}
+		}
 	}
+
 	if !alreadyRemoved {
-		err := d.waitTillProvisioned(resp.Headers.Get("Location"))
+		err := d.waitTillProvisioned(resp.Get("Location"))
 		if err != nil {
 			return volume.Response{Err: err.Error()}
 		}
 	}
 
-	resp = profitbricks.DeleteVolume(d.datacenterID, vol.VolumeID)
-	if resp.StatusCode > 299 {
+	resp, err = d.client.DeleteVolume(d.datacenterID, vol.VolumeID)
+	if err != nil {
 		log.Errorf("failed to delete volume '%s' from data center '%s'", vol.VolumeID, d.datacenterID)
-		return volume.Response{Err: string(resp.Body)}
+		return volume.Response{Err: err.Error()}
 	}
 
-	err := d.waitTillProvisioned(resp.Headers.Get("Location"))
+	err = d.waitTillProvisioned(resp.Get("Location"))
 	if err != nil {
 		return volume.Response{Err: err.Error()}
 	}
@@ -491,31 +495,31 @@ func (d *Driver) findVolumeByName(volumeName string) (string, error) {
 
 		log.Info("Using provided volume_name: ", volumeName)
 		//Check volume name is unique in the datacenter
-		volumesresp := profitbricks.ListVolumes(d.datacenterID)
-		// log.Info(volumesresp)
-		if volumesresp.StatusCode == 200 {
+		volumesresp, err := d.client.ListVolumes(d.datacenterID)
+		if err != nil {
+			log.Errorf("failed to list volumes in dc '%v'", d.datacenterID)
+			return "", fmt.Errorf(volumesresp.Response)
+		}
+
+		for _, v := range volumesresp.Items {
+			if v.Properties.Name == volumeName {
+				volumeID = v.ID
+				log.Infof("Found volume uuid %s with name %s", volumeID, volumeName)
+				return volumeID, nil
+			}
+		}
+		//Try to discover volume with etag suffix
+		if !strings.HasSuffix(volumeName, etag) {
+			volumeSuffixName := fmt.Sprintf("%s:%s", volumeName, etag)
 			for _, v := range volumesresp.Items {
-				if v.Properties.Name == volumeName {
-					volumeID = v.Id
-					log.Infof("Found volume uuid %s with name s%", volumeID, volumeName)
+				if v.Properties.Name == volumeSuffixName {
+					volumeID = v.ID
+					log.Infof("Found volume uuid %s with name %s", volumeID, volumeSuffixName)
 					return volumeID, nil
 				}
 			}
-			//Try to discover volume with etag suffix
-			if !strings.HasSuffix(volumeName, etag) {
-				volumeSuffixName := fmt.Sprintf("%s:%s", volumeName, etag)
-				for _, v := range volumesresp.Items {
-					if v.Properties.Name == volumeSuffixName {
-						volumeID = v.Id
-						log.Infof("Found volume uuid %s with name s%", volumeID, volumeSuffixName)
-						return volumeID, nil
-					}
-				}
-			}
-			return "", fmt.Errorf("Volume with name %s could not be found", volumeName)
 		}
-		log.Errorf("failed to create a volume '%v'", volumeName)
-		return "", fmt.Errorf(volumesresp.Response)
+		return "", fmt.Errorf("Volume with name %s could not be found", volumeName)
 	}
 
 	return "", nil
@@ -531,8 +535,8 @@ func (d *Driver) findVolumeByID(volumeID string, vol *profitbricks.Volume, isNew
 	if d.utilities.IsUUID(volumeID) {
 		log.Infof("Using provided volume_id: %s", volumeID)
 
-		volResp := profitbricks.GetVolume(d.datacenterID, volumeID)
-		if volResp.StatusCode != 200 {
+		volResp, err := d.client.GetVolume(d.datacenterID, volumeID)
+		if err != nil {
 			return "", isNewVolume, shouldDoFormatting, fmt.Errorf("Volume with uuid %s could not be found", volumeID)
 		}
 		log.Info(volResp)
@@ -543,8 +547,8 @@ func (d *Driver) findVolumeByID(volumeID string, vol *profitbricks.Volume, isNew
 				Name: fmt.Sprintf("%s:%s", r.Name, etag),
 			}
 
-			volEditResp := profitbricks.PatchVolume(d.datacenterID, volumeID, volProps)
-			if volEditResp.StatusCode != 202 {
+			volEditResp, err := d.client.UpdateVolume(d.datacenterID, volumeID, volProps)
+			if err != nil {
 				return "", isNewVolume, shouldDoFormatting, fmt.Errorf("Volume with uuid %s could not be updated", volumeID)
 			}
 
@@ -566,20 +570,20 @@ func (d *Driver) findSnapshotByName(r volume.Request) (string, error) {
 	if len(snapshotName) > 0 {
 		log.Info("Using provided snapshot_name: ", snapshotName)
 		//Check volume name is unique in the datacenter
-		snapshotsresp := profitbricks.ListSnapshots()
-		log.Info(snapshotsresp)
-		if snapshotsresp.StatusCode == 200 {
-			for _, v := range snapshotsresp.Items {
-				if v.Properties.Name == snapshotName {
-					snapshotID = v.Id
-				}
-			}
-			if !d.utilities.IsUUID(snapshotID) {
-				return "", fmt.Errorf("Snapshot with name %s could not be found", snapshotName)
-			}
-		} else {
+		snapshotsresp, err := d.client.ListSnapshots()
+		if err != nil {
 			log.Errorf("failed to create a volume '%v'", r.Name)
-			return "", fmt.Errorf(snapshotsresp.Response)
+			return "", fmt.Errorf(err.Error())
+		}
+		log.Info(snapshotsresp)
+
+		for _, v := range snapshotsresp.Items {
+			if v.Properties.Name == snapshotName {
+				snapshotID = v.ID
+			}
+		}
+		if !d.utilities.IsUUID(snapshotID) {
+			return "", fmt.Errorf("Snapshot with name %s could not be found", snapshotName)
 		}
 	}
 
@@ -594,8 +598,8 @@ func (d *Driver) findSnapshotByID(snapshotID string, volumeID string, vol *profi
 	if !d.utilities.IsUUID(volumeID) && d.utilities.IsUUID(snapshotID) {
 		log.Info("Using provided shanpshot: ", snapshotID)
 
-		snapshotResp := profitbricks.GetSnapshot(snapshotID)
-		if snapshotResp.StatusCode != 200 {
+		snapshotResp, err := d.client.GetSnapshot(snapshotID)
+		if err != nil {
 			return "", isNewVolume, shouldDoFormatting, fmt.Errorf("Snapshot with uuid %s could not be found", snapshotID)
 		}
 		log.Info(snapshotResp)
@@ -661,7 +665,10 @@ func (d *Driver) initVolume(name string) (*volumeState, error) {
 //waitTillProvisioned is wating till a Profitbricks long executing request is done.
 func (d *Driver) waitTillProvisioned(path string) error {
 	for {
-		request := profitbricks.GetRequestStatus(path)
+		request, err := d.client.GetRequestStatus(path)
+		if err != nil {
+			return fmt.Errorf("failed to get request status for %s", path)
+		}
 		log.Debugf("Request status: %s", request.Metadata.Status)
 		log.Debugf("Request status path: %s", path)
 
